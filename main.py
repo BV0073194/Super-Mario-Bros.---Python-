@@ -1,5 +1,5 @@
 # main.py
-# Refactor 16: Implementing NES-style Momentum and Correct Spawn
+# Refactor 20: Flexible, Dictionary-Based Loot Tables
 
 import pygame
 import os
@@ -15,13 +15,13 @@ SCALE = 3
 TILE_SIZE = 16 * SCALE
 
 # --- NES-Style Physics Constants ---
-PLAYER_ACC = 0.6            # How quickly the player gains speed
-PLAYER_FRICTION = -0.22     # How quickly the player slows down
+PLAYER_ACC = 0.6  # How quickly the player gains speed
+PLAYER_FRICTION = -0.22  # How quickly the player slows down
 PLAYER_GRAVITY = 0.8
 PLAYER_JUMP_STRENGTH = -19
 MAX_FALL_SPEED = 12
-MAX_WALK_SPEED = 4.5        # Top speed when walking
-MAX_RUN_SPEED = 7.5         # Top speed when holding the run button
+MAX_WALK_SPEED = 4.5  # Top speed when walking
+MAX_RUN_SPEED = 7.5  # Top speed when holding the run button
 
 # Colors
 BLACK = (0, 0, 0)
@@ -37,6 +37,33 @@ BLOCK_PATH = os.path.join(SHARED_PATH, "blocks")
 SOUNDS_PATH = os.path.join("game", "assets", "sounds")
 MUSIC_PATH = os.path.join(SOUNDS_PATH, "music")
 
+# --- World Data ---
+# Define the contents of lucky blocks for each world using a dictionary.
+# The KEY is the block's persistent ID, and the VALUE is its properties.
+# You can now define these in any order and skip IDs.
+WORLD_DATA = {
+    "W1-1": {
+        "lucky_blocks": {
+            0: {
+                'type': 'multi_coin',
+                'hits': 5
+            },
+            1: {
+                'type': 'single_powerup',
+                'powerups': ['mushroom']
+            },
+            5: {
+                'type': 'multi_coin',
+                'hits': 10
+            },  # Example of defining an ID out of order
+            2: {
+                'type': 'multi_coin',
+                'hits': 1
+            },
+        }
+    }
+}
+
 
 # --- Helper function for Template Matching ---
 def find_template_matches(position_map_path, template_path, threshold=0.9):
@@ -44,7 +71,8 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
     template_img = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
 
     if pos_map_img is None:
-        print(f"Error: Could not load position map image at {position_map_path}")
+        print(
+            f"Error: Could not load position map image at {position_map_path}")
         return []
     if template_img is None:
         print(f"Error: Could not load template image at {template_path}")
@@ -71,10 +99,14 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
         if not too_close:
             matches.append(pt)
             processed_points.add(pt)
+
+    # Sort by Y coordinate first, then by X coordinate to get a consistent order.
+    matches.sort(key=lambda p: (p[1], p[0]))
     return matches
 
 
 class SpriteSheet:
+
     def __init__(self, filename):
         try:
             self.sheet = pygame.image.load(filename).convert_alpha()
@@ -91,6 +123,7 @@ class SpriteSheet:
 
 
 class Animation:
+
     def __init__(self,
                  sheet,
                  col,
@@ -112,6 +145,7 @@ class Animation:
 
 
 class Animator:
+
     def __init__(self, target_sprite):
         self.target = target_sprite
         self.animations = {}
@@ -155,6 +189,7 @@ class Animator:
 
 
 class Platform(pygame.sprite.Sprite):
+
     def __init__(self, x, y, w, h):
         super().__init__()
         self.rect = pygame.Rect(x, y, w, h)
@@ -162,6 +197,7 @@ class Platform(pygame.sprite.Sprite):
 
 
 class Particle(pygame.sprite.Sprite):
+
     def __init__(self, x, y, color):
         super().__init__()
         self.image = pygame.Surface((SCALE, SCALE))
@@ -179,6 +215,7 @@ class Particle(pygame.sprite.Sprite):
 
 
 class Block(pygame.sprite.Sprite):
+
     def __init__(self, x, y, image, game):
         super().__init__()
         self.game = game
@@ -217,6 +254,7 @@ class Block(pygame.sprite.Sprite):
 
 
 class Brick(Block):
+
     def hit(self, player):
         if not self.bumping:
             if player.power_level == "small":
@@ -228,22 +266,44 @@ class Brick(Block):
 
 
 class LuckyBlock(Block):
-    def __init__(self, x, y, active_image, used_image, game):
+
+    def __init__(self, x, y, active_image, used_image, game, item_properties,
+                 block_id):
         super().__init__(x, y, active_image, game)
         self.used_image = used_image
         self.is_used = False
+        self.item_type = item_properties.get('type', 'coin')
+        self.hits_left = item_properties.get('hits', 1)
+        self.powerup_pool = item_properties.get('powerups', ['powerup'])
+        self.id = block_id
+
+    def hit(self, player):
+        if not self.is_used:
+            super().hit(player)
 
     def post_bump(self):
-        if not self.is_used:
+        if self.is_used:
+            return
+
+        self.hits_left -= 1
+
+        if self.item_type == 'multi_coin':
+            self.game.add_coin()
+            self.game.play_sfx("coin")
+        elif self.item_type == 'single_powerup':
+            self.game.play_sfx("powerup_appears")
+
+        if self.hits_left <= 0:
             self.is_used = True
             self.image = self.used_image
             self.rect = self.image.get_rect(center=self.original_pos)
-            self.game.play_sfx("powerup_appears")
 
 
 class Level:
+
     def __init__(self, world_name, game):
         self.game = game
+        self.world_name = world_name
         self.world_dir = os.path.join(WORLD_PATH_BASE, world_name)
         self.all_sprites = pygame.sprite.Group()
         self.solid_group = pygame.sprite.Group()
@@ -320,7 +380,7 @@ class Level:
                 )
                 continue
             matches = find_template_matches(breakable_pos_map_path,
-                                              template_path)
+                                            template_path)
             print(f"Found {len(matches)} matches.")
             for x, y in matches:
                 block = Brick(x * SCALE, y * SCALE, block_image, self.game)
@@ -337,31 +397,57 @@ class Level:
             lucky_sheet = SpriteSheet(lucky_spritesheet_path)
             active_image = lucky_sheet.get_sprite(0, 0, 16, 16, 0)
             used_image = lucky_sheet.get_sprite(1, 0, 16, 16, 0)
+
+            matches = find_template_matches(lucky_pos_map_path,
+                                            lucky_dect_path)
+
+            # --- Get the specific loot table for the current world ---
+            world_loot_table = WORLD_DATA.get(self.world_name,
+                                              {}).get("lucky_blocks", {})
+
         except Exception as e:
             print(f"Could not load Lucky Block assets: {e}. Skipping.")
         else:
-            matches = find_template_matches(lucky_pos_map_path,
-                                              lucky_dect_path)
-            print(f"Found {len(matches)} Lucky Block matches.")
-            for x, y in matches:
-                block = LuckyBlock(x * SCALE, y * SCALE, active_image,
-                                   used_image, self.game)
+            print(
+                f"Found {len(matches)} Lucky Block matches. Assigning based on world data."
+            )
+            for i, (x, y) in enumerate(matches):
+                # --- FIX: Use .get() on the dictionary to find the loot for the current block ID ---
+                item_properties = world_loot_table.get(i, {
+                    'type': 'multi_coin',
+                    'hits': 1
+                })
+
+                block = LuckyBlock(x * SCALE,
+                                   y * SCALE,
+                                   active_image,
+                                   used_image,
+                                   self.game,
+                                   item_properties,
+                                   block_id=i)
                 self.all_sprites.add(block)
                 self.solid_group.add(block)
                 self.lucky_blocks.add(block)
 
     def find_spawn_pos(self):
         if self.solid_group:
-            platforms_only = [p for p in self.solid_group if isinstance(p, Platform)]
+            platforms_only = [
+                p for p in self.solid_group if isinstance(p, Platform)
+            ]
             if platforms_only:
-                start_platform = min(platforms_only, key=lambda s: (s.rect.top, s.rect.left))
-                self.spawn = vec(TILE_SIZE * 2, start_platform.rect.top - TILE_SIZE)
+                start_platform = min(platforms_only,
+                                     key=lambda s: (s.rect.top, s.rect.left))
+                self.spawn = vec(TILE_SIZE * 2,
+                                 start_platform.rect.top - TILE_SIZE)
             else:
-                start_platform = min(self.solid_group.sprites(), key=lambda s: (s.rect.top, s.rect.left))
-                self.spawn = vec(start_platform.rect.left, start_platform.rect.top - TILE_SIZE)
+                start_platform = min(self.solid_group.sprites(),
+                                     key=lambda s: (s.rect.top, s.rect.left))
+                self.spawn = vec(start_platform.rect.left,
+                                 start_platform.rect.top - TILE_SIZE)
 
 
 class Player(pygame.sprite.Sprite):
+
     def __init__(self, game):
         super().__init__()
         self.game = game
@@ -422,8 +508,6 @@ class Player(pygame.sprite.Sprite):
         self.running = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         current_max_speed = MAX_RUN_SPEED if self.running else MAX_WALK_SPEED
 
-        # --- Corrected NES-Style Momentum ---
-        # 1. Set acceleration based on input
         if keys[pygame.K_LEFT]:
             self.acc.x = -PLAYER_ACC
             self.direction = "left"
@@ -433,26 +517,18 @@ class Player(pygame.sprite.Sprite):
         else:
             self.acc.x = 0
 
-        # 2. Apply acceleration to velocity
-        self.vel.x += self.acc.x
-
-        # 3. Apply friction only when no direction is pressed
         if self.acc.x == 0:
-            if self.vel.x > 0:
-                self.vel.x += PLAYER_FRICTION # Friction is negative, so this subtracts
-                if self.vel.x < 0: self.vel.x = 0 # Prevent overshooting
-            elif self.vel.x < 0:
-                self.vel.x -= PLAYER_FRICTION # Friction is negative, so this adds
-                if self.vel.x > 0: self.vel.x = 0 # Prevent overshooting
+            self.vel.x += self.vel.x * PLAYER_FRICTION
+        else:
+            self.vel.x += self.acc.x
 
-        # 4. Clamp horizontal speed to the current maximum (walk or run)
-        self.vel.x = max(-current_max_speed, min(current_max_speed, self.vel.x))
+        self.vel.x = max(-current_max_speed, min(current_max_speed,
+                                                 self.vel.x))
+        if abs(self.vel.x) < 0.1: self.vel.x = 0
 
-        # 5. Apply vertical physics
         self.vel.y += PLAYER_GRAVITY
         self.vel.y = min(MAX_FALL_SPEED, self.vel.y)
 
-        # 6. Standard position and collision updates
         self.pos.x += self.vel.x
         self.hitbox.centerx = round(self.pos.x)
         self.check_collisions('horizontal', self.game.level.solid_group)
@@ -513,6 +589,7 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game:
+
     def __init__(self):
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
@@ -532,12 +609,15 @@ class Game:
         self.console_active = False
         self.console_text = ""
         self.console_font = pygame.font.Font(None, 32)
+        self.hud_font = pygame.font.Font(None, 40)  # Font for the HUD
         self.sfx = {}
         self.load_sfx()
         self.particle_group = pygame.sprite.Group()
+        self.coins = 0  # Initialize coin counter
 
     def new_game(self):
         self.particle_group.empty()
+        self.coins = 0  # Reset coins on new game
         self.level = Level("W1-1", self)
         self.player = Player(self)
         self.player.pos = self.level.spawn
@@ -628,12 +708,20 @@ class Game:
         for particle in self.particle_group:
             self.screen.blit(particle.image, self.camera.apply(particle))
 
+        self.draw_hud()
+
         if self.debug_mode:
             pygame.draw.rect(self.screen, (255, 255, 0),
                              self.camera.apply_rect(self.player.hitbox), 2)
-            for sprite in self.solid_group:
+            for sprite in self.level.solid_group:
                 pygame.draw.rect(self.screen, DEBUG_COLOR,
                                  self.camera.apply_rect(sprite.hitbox), 1)
+            # --- Draw Lucky Block IDs in debug mode ---
+            for block in self.level.lucky_blocks:
+                id_text = f"ID: {block.id}"
+                text_surf = self.console_font.render(id_text, True, WHITE)
+                text_rect = text_surf.get_rect(center=block.rect.center)
+                self.screen.blit(text_surf, self.camera.apply_rect(text_rect))
 
         if self.console_active:
             console_surf = pygame.Surface((SCREEN_WIDTH, 40))
@@ -646,6 +734,13 @@ class Game:
 
         pygame.display.flip()
 
+    def draw_hud(self):
+        """Draws the game's Head-Up Display."""
+        coin_text = f"COINS x{self.coins:02}"
+        text_surf = self.hud_font.render(coin_text, True, WHITE)
+        text_rect = text_surf.get_rect(center=(SCREEN_WIDTH / 2, 30))
+        self.screen.blit(text_surf, text_rect)
+
     # --- Sound Methods ---
     def load_sfx(self):
         if not self.audio_enabled:
@@ -657,7 +752,10 @@ class Game:
                 os.path.join(SOUNDS_PATH, "bump.mp3"))
             self.sfx["brick_break"] = pygame.mixer.Sound(
                 os.path.join(SOUNDS_PATH, "brick-smash.mp3"))
-            self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
+            self.sfx["powerup_appears"] = pygame.mixer.Sound(
+                os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
+            self.sfx["coin"] = pygame.mixer.Sound(
+                os.path.join(SOUNDS_PATH, "coin.mp3"))
 
         except pygame.error as e:
             print(f"Cannot load sound effect: {e}")
@@ -695,8 +793,13 @@ class Game:
                     particle = Particle(particle_x, particle_y, color)
                     self.particle_group.add(particle)
 
+    def add_coin(self):
+        """Increments the coin counter."""
+        self.coins += 1
+
 
 class Camera:
+
     def __init__(self, width, height):
         self.camera = pygame.Rect(0, 0, width, height)
         self.width, self.height = width, height
