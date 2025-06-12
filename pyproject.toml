@@ -1,9 +1,18 @@
 [project]
-name = "python-template"
+name = "super-mario-bros-python"
 version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
+description = "A Super Mario Bros clone in Python using Pygame"
+authors = [{ name = "Your Name", email = "you@example.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "pygame>=2.6.1",
+    "opencv-python>=4.9.0",
+    "numpy>=1.26.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["game", "WorldData"]
