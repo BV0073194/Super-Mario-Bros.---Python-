@@ -1,5 +1,5 @@
 # main.py
-# Refactor 15: Adding Audio System Failsafe
+# Refactor 16: Implementing NES-style Momentum and Correct Spawn
 
 import pygame
 import os
@@ -15,12 +15,13 @@ SCALE = 3
 TILE_SIZE = 16 * SCALE
 
 # --- NES-Style Physics Constants ---
-PLAYER_ACC = 0.55
-PLAYER_FRICTION = -0.25
+PLAYER_ACC = 0.6            # How quickly the player gains speed
+PLAYER_FRICTION = -0.22     # How quickly the player slows down
 PLAYER_GRAVITY = 0.8
 PLAYER_JUMP_STRENGTH = -19
 MAX_FALL_SPEED = 12
-MAX_RUN_SPEED = 7
+MAX_WALK_SPEED = 4.5        # Top speed when walking
+MAX_RUN_SPEED = 7.5         # Top speed when holding the run button
 
 # Colors
 BLACK = (0, 0, 0)
@@ -33,7 +34,6 @@ vec = pygame.math.Vector2
 WORLD_PATH_BASE = os.path.join("game", "assets", "Worlds")
 SHARED_PATH = os.path.join("game", "assets", "Shared")
 BLOCK_PATH = os.path.join(SHARED_PATH, "blocks")
-# --- Path for Sound Assets ---
 SOUNDS_PATH = os.path.join("game", "assets", "sounds")
 MUSIC_PATH = os.path.join(SOUNDS_PATH, "music")
 
@@ -44,8 +44,7 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
     template_img = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
 
     if pos_map_img is None:
-        print(
-            f"Error: Could not load position map image at {position_map_path}")
+        print(f"Error: Could not load position map image at {position_map_path}")
         return []
     if template_img is None:
         print(f"Error: Could not load template image at {template_path}")
@@ -76,7 +75,6 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
 
 
 class SpriteSheet:
-
     def __init__(self, filename):
         try:
             self.sheet = pygame.image.load(filename).convert_alpha()
@@ -93,7 +91,6 @@ class SpriteSheet:
 
 
 class Animation:
-
     def __init__(self,
                  sheet,
                  col,
@@ -115,7 +112,6 @@ class Animation:
 
 
 class Animator:
-
     def __init__(self, target_sprite):
         self.target = target_sprite
         self.animations = {}
@@ -159,7 +155,6 @@ class Animator:
 
 
 class Platform(pygame.sprite.Sprite):
-
     def __init__(self, x, y, w, h):
         super().__init__()
         self.rect = pygame.Rect(x, y, w, h)
@@ -167,7 +162,6 @@ class Platform(pygame.sprite.Sprite):
 
 
 class Particle(pygame.sprite.Sprite):
-
     def __init__(self, x, y, color):
         super().__init__()
         self.image = pygame.Surface((SCALE, SCALE))
@@ -185,7 +179,6 @@ class Particle(pygame.sprite.Sprite):
 
 
 class Block(pygame.sprite.Sprite):
-
     def __init__(self, x, y, image, game):
         super().__init__()
         self.game = game
@@ -224,7 +217,6 @@ class Block(pygame.sprite.Sprite):
 
 
 class Brick(Block):
-
     def hit(self, player):
         if not self.bumping:
             if player.power_level == "small":
@@ -236,7 +228,6 @@ class Brick(Block):
 
 
 class LuckyBlock(Block):
-
     def __init__(self, x, y, active_image, used_image, game):
         super().__init__(x, y, active_image, game)
         self.used_image = used_image
@@ -247,11 +238,10 @@ class LuckyBlock(Block):
             self.is_used = True
             self.image = self.used_image
             self.rect = self.image.get_rect(center=self.original_pos)
-            #self.game.play_sfx("powerup_appears")
+            self.game.play_sfx("powerup_appears")
 
 
 class Level:
-
     def __init__(self, world_name, game):
         self.game = game
         self.world_dir = os.path.join(WORLD_PATH_BASE, world_name)
@@ -330,7 +320,7 @@ class Level:
                 )
                 continue
             matches = find_template_matches(breakable_pos_map_path,
-                                            template_path)
+                                              template_path)
             print(f"Found {len(matches)} matches.")
             for x, y in matches:
                 block = Brick(x * SCALE, y * SCALE, block_image, self.game)
@@ -351,7 +341,7 @@ class Level:
             print(f"Could not load Lucky Block assets: {e}. Skipping.")
         else:
             matches = find_template_matches(lucky_pos_map_path,
-                                            lucky_dect_path)
+                                              lucky_dect_path)
             print(f"Found {len(matches)} Lucky Block matches.")
             for x, y in matches:
                 block = LuckyBlock(x * SCALE, y * SCALE, active_image,
@@ -362,21 +352,16 @@ class Level:
 
     def find_spawn_pos(self):
         if self.solid_group:
-            platforms_only = [
-                p for p in self.solid_group if isinstance(p, Platform)
-            ]
+            platforms_only = [p for p in self.solid_group if isinstance(p, Platform)]
             if platforms_only:
-                start_platform = min(platforms_only,
-                                     key=lambda s: (s.rect.top, s.rect.left))
+                start_platform = min(platforms_only, key=lambda s: (s.rect.top, s.rect.left))
+                self.spawn = vec(TILE_SIZE * 2, start_platform.rect.top - TILE_SIZE)
             else:
-                start_platform = min(self.solid_group.sprites(),
-                                     key=lambda s: (s.rect.top, s.rect.left))
-            self.spawn = vec(start_platform.rect.left + 48,
-                             start_platform.rect.top - TILE_SIZE)
+                start_platform = min(self.solid_group.sprites(), key=lambda s: (s.rect.top, s.rect.left))
+                self.spawn = vec(start_platform.rect.left, start_platform.rect.top - TILE_SIZE)
 
 
 class Player(pygame.sprite.Sprite):
-
     def __init__(self, game):
         super().__init__()
         self.game = game
@@ -389,6 +374,7 @@ class Player(pygame.sprite.Sprite):
         self.acc = vec(0, 0)
         self.direction = "right"
         self.on_ground = False
+        self.running = False
 
         self.power_level = "small"
         self.small_anims = {}
@@ -432,22 +418,41 @@ class Player(pygame.sprite.Sprite):
 
     def update(self):
         keys = pygame.key.get_pressed()
-        self.acc.x = 0
+
+        self.running = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        current_max_speed = MAX_RUN_SPEED if self.running else MAX_WALK_SPEED
+
+        # --- Corrected NES-Style Momentum ---
+        # 1. Set acceleration based on input
         if keys[pygame.K_LEFT]:
             self.acc.x = -PLAYER_ACC
             self.direction = "left"
-        if keys[pygame.K_RIGHT]:
+        elif keys[pygame.K_RIGHT]:
             self.acc.x = PLAYER_ACC
             self.direction = "right"
+        else:
+            self.acc.x = 0
 
-        if self.on_ground:
-            self.acc.x += self.vel.x * PLAYER_FRICTION
+        # 2. Apply acceleration to velocity
         self.vel.x += self.acc.x
+
+        # 3. Apply friction only when no direction is pressed
+        if self.acc.x == 0:
+            if self.vel.x > 0:
+                self.vel.x += PLAYER_FRICTION # Friction is negative, so this subtracts
+                if self.vel.x < 0: self.vel.x = 0 # Prevent overshooting
+            elif self.vel.x < 0:
+                self.vel.x -= PLAYER_FRICTION # Friction is negative, so this adds
+                if self.vel.x > 0: self.vel.x = 0 # Prevent overshooting
+
+        # 4. Clamp horizontal speed to the current maximum (walk or run)
+        self.vel.x = max(-current_max_speed, min(current_max_speed, self.vel.x))
+
+        # 5. Apply vertical physics
         self.vel.y += PLAYER_GRAVITY
-        if abs(self.vel.x) < 0.1: self.vel.x = 0
-        self.vel.x = max(-MAX_RUN_SPEED, min(MAX_RUN_SPEED, self.vel.x))
         self.vel.y = min(MAX_FALL_SPEED, self.vel.y)
 
+        # 6. Standard position and collision updates
         self.pos.x += self.vel.x
         self.hitbox.centerx = round(self.pos.x)
         self.check_collisions('horizontal', self.game.level.solid_group)
@@ -508,11 +513,9 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game:
-
     def __init__(self):
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
-        # --- FIX: Added failsafe for audio system initialization ---
         try:
             pygame.mixer.init()
             self.audio_enabled = True
@@ -654,7 +657,7 @@ class Game:
                 os.path.join(SOUNDS_PATH, "bump.mp3"))
             self.sfx["brick_break"] = pygame.mixer.Sound(
                 os.path.join(SOUNDS_PATH, "brick-smash.mp3"))
-            #self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
+            self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
 
         except pygame.error as e:
             print(f"Cannot load sound effect: {e}")
@@ -694,7 +697,6 @@ class Game:
 
 
 class Camera:
-
     def __init__(self, width, height):
         self.camera = pygame.Rect(0, 0, width, height)
         self.width, self.height = width, height
