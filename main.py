@@ -1,10 +1,11 @@
 # main.py
-# Refactor 11: Adding Music and Sound Effects
+# Refactor 15: Adding Audio System Failsafe
 
 import pygame
 import os
 import cv2
 import numpy as np
+import random
 
 # --- Game Settings ---
 SCREEN_WIDTH = 800
@@ -147,10 +148,26 @@ class Platform(pygame.sprite.Sprite):
         self.rect = pygame.Rect(x, y, w, h)
         self.hitbox = self.rect.copy()
 
+class Particle(pygame.sprite.Sprite):
+    def __init__(self, x, y, color):
+        super().__init__()
+        self.image = pygame.Surface((SCALE, SCALE))
+        self.image.fill(color)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.pos = vec(x, y)
+        self.vel = vec(random.uniform(-4, 4), random.uniform(-12, -4))
+
+    def update(self):
+        self.vel.y += PLAYER_GRAVITY
+        self.pos += self.vel
+        self.rect.center = self.pos
+        if self.rect.top > SCREEN_HEIGHT:
+            self.kill()
 
 class Block(pygame.sprite.Sprite):
-    def __init__(self, x, y, image):
+    def __init__(self, x, y, image, game):
         super().__init__()
+        self.game = game
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
         self.original_pos = self.rect.center
@@ -177,6 +194,7 @@ class Block(pygame.sprite.Sprite):
 
     def hit(self, player):
         if not self.bumping:
+            self.game.play_sfx("bump")
             self.bumping = True
             self.bump_offset = 0
 
@@ -189,11 +207,13 @@ class Brick(Block):
             if player.power_level == "small":
                 super().hit(player)
             else:
+                self.game.play_sfx("brick_break")
+                self.game.create_particles(self.rect, self.image)
                 self.kill()
 
 class LuckyBlock(Block):
-    def __init__(self, x, y, active_image, used_image):
-        super().__init__(x, y, active_image)
+    def __init__(self, x, y, active_image, used_image, game):
+        super().__init__(x, y, active_image, game)
         self.used_image = used_image
         self.is_used = False
 
@@ -202,16 +222,17 @@ class LuckyBlock(Block):
             self.is_used = True
             self.image = self.used_image
             self.rect = self.image.get_rect(center=self.original_pos)
+            self.game.play_sfx("powerup_appears")
 
 
 class Level:
-    def __init__(self, world_name):
+    def __init__(self, world_name, game):
+        self.game = game
         self.world_dir = os.path.join(WORLD_PATH_BASE, world_name)
         self.all_sprites = pygame.sprite.Group()
         self.solid_group = pygame.sprite.Group()
         self.breakable_blocks = pygame.sprite.Group()
         self.lucky_blocks = pygame.sprite.Group()
-        # --- Add level-specific music file ---
         self.music_file = "01-main-theme-overworld.mp3"
         self.load_layers()
         self.width = self.background_layer.get_width()
@@ -279,7 +300,7 @@ class Level:
             matches = find_template_matches(breakable_pos_map_path, template_path)
             print(f"Found {len(matches)} matches.")
             for x, y in matches:
-                block = Brick(x * SCALE, y * SCALE, block_image)
+                block = Brick(x * SCALE, y * SCALE, block_image, self.game)
                 self.all_sprites.add(block)
                 self.solid_group.add(block)
                 self.breakable_blocks.add(block)
@@ -298,7 +319,7 @@ class Level:
             matches = find_template_matches(lucky_pos_map_path, lucky_dect_path)
             print(f"Found {len(matches)} Lucky Block matches.")
             for x, y in matches:
-                block = LuckyBlock(x * SCALE, y * SCALE, active_image, used_image)
+                block = LuckyBlock(x * SCALE, y * SCALE, active_image, used_image, self.game)
                 self.all_sprites.add(block)
                 self.solid_group.add(block)
                 self.lucky_blocks.add(block)
@@ -327,21 +348,47 @@ class Player(pygame.sprite.Sprite):
         self.acc = vec(0, 0)
         self.direction = "right"
         self.on_ground = False
+
         self.power_level = "small"
+        self.small_anims = {}
+        self.big_anims = {}
         self.animator = Animator(self)
         self.load_animations()
-        self.animator.set("idle")
+        self.set_power_level("small")
 
     def load_animations(self):
         sheet_path = os.path.join(SHARED_PATH, "MarioLuigi.png")
         try:
             sheet = SpriteSheet(sheet_path)
-            self.animator.add("idle", Animation(sheet, 0, 1, 1, 500))
-            self.animator.add("walk", Animation(sheet, 1, 1, 3, 300))
-            self.animator.add("jump", Animation(sheet, 0, 0, 1, 500))
-            self.animator.add("skid", Animation(sheet, 4, 1, 1, 500))
+            self.small_anims["idle"] = Animation(sheet, 0, 1, 1, 500)
+            self.small_anims["walk"] = Animation(sheet, 1, 1, 3, 300)
+            self.small_anims["jump"] = Animation(sheet, 0, 0, 1, 500)
+            self.small_anims["skid"] = Animation(sheet, 4, 1, 1, 500)
+
+            self.big_anims["idle"] = Animation(sheet, 0, 3, 1, 500)
+            self.big_anims["walk"] = Animation(sheet, 1, 3, 3, 300)
+            self.big_anims["jump"] = Animation(sheet, 0, 2, 1, 500)
+            self.big_anims["skid"] = Animation(sheet, 4, 3, 1, 500)
+
         except Exception as e:
             print(f"Could not load player animations from {sheet_path}: {e}")
+
+    def set_power_level(self, level):
+        self.power_level = level
+        bottom = self.hitbox.bottom
+        if self.power_level == "big":
+            print("Player is now BIG")
+            self.animator.animations = self.big_anims
+            self.hitbox = pygame.Rect(0, 0, 16 * SCALE, 30 * SCALE)
+        else: 
+            print("Player is now SMALL")
+            self.animator.animations = self.small_anims
+            self.hitbox = pygame.Rect(0, 0, 12 * SCALE, 15 * SCALE)
+
+        self.hitbox.bottom = bottom
+        self.pos = vec(self.hitbox.center)
+        self.animator.set("idle")
+
 
     def update(self):
         keys = pygame.key.get_pressed()
@@ -417,22 +464,20 @@ class Player(pygame.sprite.Sprite):
     def jump(self):
         if self.on_ground:
             self.vel.y = PLAYER_JUMP_STRENGTH
-            # --- Play jump sound effect ---
             self.game.play_sfx("jump")
 
 
 class Game:
     def __init__(self):
-        # --- Initialize mixer before the main pygame.init() ---
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
+        # --- FIX: Added failsafe for audio system initialization ---
         try:
             pygame.mixer.init()
             self.audio_enabled = True
         except pygame.error:
             print("Audio system not available. Sounds disabled.")
             self.audio_enabled = False
-
 
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Super Python Bro")
@@ -443,12 +488,13 @@ class Game:
         self.console_active = False
         self.console_text = ""
         self.console_font = pygame.font.Font(None, 32)
-        # --- Dictionary to hold loaded sound effects ---
         self.sfx = {}
         self.load_sfx()
+        self.particle_group = pygame.sprite.Group()
 
     def new_game(self):
-        self.level = Level("W1-1")
+        self.particle_group.empty()
+        self.level = Level("W1-1", self)
         self.player = Player(self)
         self.player.pos = self.level.spawn
         self.level.all_sprites.add(self.player)
@@ -509,15 +555,14 @@ class Game:
             else: print("Usage: /tp <x> <y>")
         elif cmd == "power":
             if args and args[0].lower() in ["big", "super"]:
-                self.player.power_level = "big"
-                print("Player power level set to 'big'")
+                self.player.set_power_level("big")
             else:
-                self.player.power_level = "small"
-                print("Player power level set to 'small'")
+                self.player.set_power_level("small")
 
     def update(self):
         if not self.console_active:
             self.level.all_sprites.update()
+            self.particle_group.update()
             self.camera.update(self.player)
 
     def draw(self):
@@ -529,9 +574,13 @@ class Game:
         for sprite in self.level.all_sprites:
             self.screen.blit(sprite.image, self.camera.apply(sprite))
 
+        for particle in self.particle_group:
+            self.screen.blit(particle.image, self.camera.apply(particle))
+
+
         if self.debug_mode:
             pygame.draw.rect(self.screen, (255, 255, 0), self.camera.apply_rect(self.player.hitbox), 2)
-            for sprite in self.level.solid_group:
+            for sprite in self.solid_group:
                 pygame.draw.rect(self.screen, DEBUG_COLOR, self.camera.apply_rect(sprite.hitbox), 1)
 
         if self.console_active:
@@ -546,21 +595,24 @@ class Game:
 
     # --- Sound Methods ---
     def load_sfx(self):
-        """Load all sound effects into a dictionary."""
+        if not self.audio_enabled:
+            return
         try:
             self.sfx["jump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "jump.mp3"))
-            # Add other sound effects here
-            # self.sfx["bump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "bump.wav"))
+            self.sfx["bump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "bump.mp3"))
+            self.sfx["brick_break"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "brick-smash.mp3"))
+            self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
+
         except pygame.error as e:
             print(f"Cannot load sound effect: {e}")
 
     def play_sfx(self, name):
-        """Play a sound effect from the loaded dictionary."""
+        if not self.audio_enabled:
+            return
         if name in self.sfx:
             self.sfx[name].play()
 
     def play_level_music(self):
-        """Load and play the music for the current level."""
         if not self.audio_enabled:
             print("Audio not enabled — skipping music playback.")
             return
@@ -575,6 +627,17 @@ class Game:
                 print(f"Error playing music: {e}")
         else:
             print(f"Warning: Music file not found: {music_path}")
+
+    def create_particles(self, rect, image):
+        image_small = pygame.transform.scale(image, (16, 16))
+        for x in range(image_small.get_width()):
+            for y in range(image_small.get_height()):
+                color = image_small.get_at((x, y))
+                if color[3] > 0:
+                    particle_x = rect.x + (x * SCALE)
+                    particle_y = rect.y + (y * SCALE)
+                    particle = Particle(particle_x, particle_y, color)
+                    self.particle_group.add(particle)
 
 
 class Camera:
