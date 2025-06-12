@@ -114,7 +114,7 @@ wheels = [
 ]
 
 [[package]]
-name = "python-template"
+name = "repl-nix-workspace"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -125,7 +125,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "numpy", specifier = ">=1.26.0" },
-    { name = "opencv-python", specifier = ">=4.9.0" },
+    { name = "numpy", specifier = ">=2.3.0" },
+    { name = "opencv-python", specifier = ">=4.11.0.86" },
     { name = "pygame", specifier = ">=2.6.1" },
 ]

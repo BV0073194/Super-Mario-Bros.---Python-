@@ -1,0 +1,10 @@
+[project]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.3.0",
+    "opencv-python>=4.11.0.86",
+    "pygame>=2.6.1",
+]
