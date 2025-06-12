@@ -1,5 +1,5 @@
 # main.py
-# Refactor 9: Correcting Lucky Block to be Static Based on Spritesheet
+# Refactor 10: Correcting Block Bump Physics and Reset Logic
 
 import pygame
 import os
@@ -149,7 +149,8 @@ class Block(pygame.sprite.Sprite):
         super().__init__()
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
-        self.original_pos = vec(self.rect.center)
+        # --- Store original position as an integer tuple to avoid float precision errors ---
+        self.original_pos = self.rect.center
         self.bumping = False
         self.bump_offset = 0
         hitbox_size = 15 * SCALE
@@ -159,13 +160,19 @@ class Block(pygame.sprite.Sprite):
     def update(self):
         if self.bumping:
             self.bump_offset += 1
-            self.rect.centery = self.original_pos.y - 12 * (
-                self.bump_offset / 6 - (self.bump_offset / 6) ** 2
-            )
+            # --- FIX: A corrected parabolic motion formula for a 12-frame bump ---
+            # This ensures the block moves smoothly up and returns precisely to the start.
+            progress = self.bump_offset / 12.0
+            y_offset = 48 * (progress - progress**2) # 48 gives a peak of 12 pixels
+            self.rect.centery = self.original_pos[1] - y_offset
+
             if self.bump_offset >= 12:
                 self.rect.center = self.original_pos
                 self.bumping = False
+                self.bump_offset = 0 # Reset offset for the next bump
                 self.post_bump()
+
+        # This must be the last step to ensure hitbox is synced with the final rect position
         self.hitbox.center = self.rect.center
 
     def hit(self, player):
@@ -184,7 +191,6 @@ class Brick(Block):
             else:
                 self.kill()
 
-# --- FIX: LuckyBlock is now static, no animator needed ---
 class LuckyBlock(Block):
     def __init__(self, x, y, active_image, used_image):
         super().__init__(x, y, active_image)
@@ -195,7 +201,8 @@ class LuckyBlock(Block):
         if not self.is_used:
             self.is_used = True
             self.image = self.used_image
-            self.rect = self.image.get_rect(center=self.hitbox.center)
+            # --- FIX: Center the new rect on the block's true original position, not the hitbox ---
+            self.rect = self.image.get_rect(center=self.original_pos)
 
 
 class Level:
@@ -282,7 +289,6 @@ class Level:
         print(f"Scanning for Lucky Blocks...")
         try:
             lucky_sheet = SpriteSheet(lucky_spritesheet_path)
-            # --- FIX: Load the two static frames from the 2-frame spritesheet with 0 padding ---
             active_image = lucky_sheet.get_sprite(0, 0, 16, 16, 0)
             used_image = lucky_sheet.get_sprite(1, 0, 16, 16, 0)
         except Exception as e:
@@ -535,7 +541,7 @@ class Camera:
 
     def update(self, target):
         x = -target.hitbox.centerx + int(SCREEN_WIDTH / 2.5)
-        y = -target.hitbox.centery + int(SCREEN_HEIGHT * 0.7)
+        y = -target.hitbox.centery + int(SCREEN_HEIGHT * 0.8)
         x = min(0, x)
         x = max(-(self.width - SCREEN_WIDTH), x)
         y = min(0, y)
