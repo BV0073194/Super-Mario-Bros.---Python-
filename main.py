@@ -1,5 +1,5 @@
 # main.py
-# Final Major Refactor: Using OpenCV Template Matching for Block Placement
+# Refactor 9: Correcting Lucky Block to be Static Based on Spritesheet
 
 import pygame
 import os
@@ -13,12 +13,13 @@ FPS = 60
 SCALE = 3
 TILE_SIZE = 16 * SCALE
 
-# Player physics
-PLAYER_ACC = 0.5
-PLAYER_FRICTION = -0.1
-PLAYER_GRAVITY = 0.9
-PLAYER_JUMP = -22 
-MAX_RUN_SPEED = 6
+# --- NES-Style Physics Constants ---
+PLAYER_ACC = 0.55
+PLAYER_FRICTION = -0.25
+PLAYER_GRAVITY = 0.8
+PLAYER_JUMP_STRENGTH = -19
+MAX_FALL_SPEED = 12
+MAX_RUN_SPEED = 7
 
 # Colors
 BLACK = (0, 0, 0)
@@ -34,18 +35,16 @@ BLOCK_PATH = os.path.join(SHARED_PATH, "blocks")
 
 # --- Helper function for Template Matching ---
 def find_template_matches(position_map_path, template_path, threshold=0.9):
-    """
-    Finds all locations in position_map where the template matches.
-    Returns a list of (x, y) coordinates for the top-left of each match.
-    """
     pos_map_img = cv2.imread(position_map_path, cv2.IMREAD_UNCHANGED)
     template_img = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
 
-    if pos_map_img is None or template_img is None:
-        print(f"Error loading images for template matching: {position_map_path} or {template_path}")
+    if pos_map_img is None:
+        print(f"Error: Could not load position map image at {position_map_path}")
+        return []
+    if template_img is None:
+        print(f"Error: Could not load template image at {template_path}")
         return []
 
-    # Ensure images have an alpha channel for consistent matching
     if len(pos_map_img.shape) < 3 or pos_map_img.shape[2] == 3:
         pos_map_img = cv2.cvtColor(pos_map_img, cv2.COLOR_BGR2BGRA)
     if len(template_img.shape) < 3 or template_img.shape[2] == 3:
@@ -56,22 +55,23 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
 
     matches = []
     processed_points = set()
+    h, w = template_img.shape[:2]
     for pt in zip(*locations[::-1]):
         too_close = False
         for processed_pt in processed_points:
-            if abs(pt[0] - processed_pt[0]) < 10 and abs(pt[1] - processed_pt[1]) < 10:
+            if abs(pt[0] - processed_pt[0]) < w * 0.5 and abs(pt[1] - processed_pt[1]) < h * 0.5:
                 too_close = True
                 break
         if not too_close:
             matches.append(pt)
             processed_points.add(pt)
-
     return matches
+
 
 class SpriteSheet:
     def __init__(self, filename):
         try:
-            self.sheet = pygame.image.load(filename).convert()
+            self.sheet = pygame.image.load(filename).convert_alpha()
         except pygame.error as e:
             print(f"Unable to load spritesheet: {filename}")
             raise SystemExit(e)
@@ -79,25 +79,28 @@ class SpriteSheet:
     def get_sprite(self, col, row, width=16, height=16, padding=1):
         x = col * (width + padding) + padding
         y = row * (height + padding) + padding
-        image = pygame.Surface((width, height)).convert()
+        image = pygame.Surface((width, height), pygame.SRCALPHA)
         image.blit(self.sheet, (0, 0), (x, y, width, height))
-        image.set_colorkey(BLACK)
         return pygame.transform.scale(image, (width * SCALE, height * SCALE))
 
+
 class Animation:
-    def __init__(self, sheet, col, row, count, duration, layout='horizontal', looped=True):
+    def __init__(self, sheet, col, row, count, duration, layout="horizontal", looped=True):
         self.frames = []
-        if count > 0: self.duration = duration / count
-        else: self.duration = float('inf')
+        if count > 0:
+            self.duration = duration / count if duration > 0 else 0
+        else:
+            self.duration = float("inf")
         self.looped = looped
         for i in range(count):
-            dx = col + i if layout == 'horizontal' else col
-            dy = row + i if layout == 'vertical' else row
+            dx = col + i if layout == "horizontal" else col
+            dy = row if layout == "horizontal" else row + i
             self.frames.append(sheet.get_sprite(dx, dy))
 
+
 class Animator:
-    def __init__(self, player):
-        self.player = player
+    def __init__(self, target_sprite):
+        self.target = target_sprite
         self.animations = {}
         self.current = None
         self.frame_index = 0
@@ -113,7 +116,8 @@ class Animator:
             self.last_time = pygame.time.get_ticks()
 
     def update(self):
-        if not self.current or not self.current.frames: return
+        if not self.current or not self.current.frames:
+            return
         now = pygame.time.get_ticks()
         if self.current.duration > 0 and now - self.last_time > self.current.duration:
             self.last_time = now
@@ -121,32 +125,48 @@ class Animator:
                 self.frame_index = (self.frame_index + 1) % len(self.current.frames)
             else:
                 self.frame_index = min(self.frame_index + 1, len(self.current.frames) - 1)
+
         if self.frame_index < len(self.current.frames):
             frame = self.current.frames[self.frame_index]
-            self.player.image = pygame.transform.flip(frame, True, False) if self.player.direction == 'left' else frame
+
+            if hasattr(self.target, 'direction') and self.target.direction == 'left':
+                frame = pygame.transform.flip(frame, True, False)
+
+            self.target.image = frame
+            if hasattr(self.target, 'hitbox'):
+                self.target.rect = self.target.image.get_rect(center=self.target.hitbox.center)
+
 
 class Platform(pygame.sprite.Sprite):
     def __init__(self, x, y, w, h):
         super().__init__()
         self.rect = pygame.Rect(x, y, w, h)
+        self.hitbox = self.rect.copy()
+
 
 class Block(pygame.sprite.Sprite):
     def __init__(self, x, y, image):
         super().__init__()
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
-        self.original_pos = vec(x, y)
+        self.original_pos = vec(self.rect.center)
         self.bumping = False
         self.bump_offset = 0
+        hitbox_size = 15 * SCALE
+        self.hitbox = pygame.Rect(0, 0, hitbox_size, hitbox_size)
+        self.hitbox.center = self.rect.center
 
     def update(self):
         if self.bumping:
             self.bump_offset += 1
-            self.rect.y = self.original_pos.y - 10 * (self.bump_offset / 5 - (self.bump_offset / 5)**2)
-            if self.bump_offset >= 10:
-                self.rect.y = self.original_pos.y
+            self.rect.centery = self.original_pos.y - 12 * (
+                self.bump_offset / 6 - (self.bump_offset / 6) ** 2
+            )
+            if self.bump_offset >= 12:
+                self.rect.center = self.original_pos
                 self.bumping = False
                 self.post_bump()
+        self.hitbox.center = self.rect.center
 
     def hit(self, player):
         if not self.bumping:
@@ -159,33 +179,32 @@ class Block(pygame.sprite.Sprite):
 class Brick(Block):
     def hit(self, player):
         if not self.bumping:
-            if player.power_level == 'small':
+            if player.power_level == "small":
                 super().hit(player)
             else:
                 self.kill()
 
+# --- FIX: LuckyBlock is now static, no animator needed ---
 class LuckyBlock(Block):
-    def __init__(self, x, y, image, used_image):
-        super().__init__(x,y,image)
+    def __init__(self, x, y, active_image, used_image):
+        super().__init__(x, y, active_image)
         self.used_image = used_image
         self.is_used = False
 
-    def hit(self, player):
-        if not self.is_used:
-            super().hit(player)
-
     def post_bump(self):
         if not self.is_used:
-            self.image = self.used_image
             self.is_used = True
+            self.image = self.used_image
+            self.rect = self.image.get_rect(center=self.hitbox.center)
+
 
 class Level:
     def __init__(self, world_name):
         self.world_dir = os.path.join(WORLD_PATH_BASE, world_name)
-        self.all_sprites = pygame.sprite.Group() 
+        self.all_sprites = pygame.sprite.Group()
         self.solid_group = pygame.sprite.Group()
-        self.debug_block_overlays = []
-
+        self.breakable_blocks = pygame.sprite.Group()
+        self.lucky_blocks = pygame.sprite.Group()
         self.load_layers()
         self.width = self.background_layer.get_width()
         self.height = self.background_layer.get_height()
@@ -200,178 +219,216 @@ class Level:
         self.tube_layer = self._load_visual_layer("TubeData.png")
         self._create_collision_from_map(os.path.join(self.world_dir, "GroundData.png"))
         self._create_collision_from_map(os.path.join(self.world_dir, "TubeData.png"))
-        self._create_blocks_from_template_match()
+        self._create_objects_from_template_match()
 
     def _load_visual_layer(self, filename):
         path = os.path.join(self.world_dir, filename)
-        image = pygame.image.load(path).convert_alpha()
-        return pygame.transform.scale(image, (image.get_width() * SCALE, image.get_height() * SCALE))
+        raw_image = pygame.image.load(path)
+        scaled_image = pygame.transform.scale(
+            raw_image, (raw_image.get_width() * SCALE, raw_image.get_height() * SCALE)
+        )
+        return scaled_image.convert_alpha()
+
 
     def _create_collision_from_map(self, path):
-        image_map = pygame.image.load(path).convert_alpha()
+        try:
+            image_map = pygame.image.load(path).convert_alpha()
+        except pygame.error:
+            print(f"Collision map not found: {path}. Skipping.")
+            return
         map_w, map_h = image_map.get_size()
         for y in range(map_h):
             x = 0
             while x < map_w:
                 if image_map.get_at((x, y))[3] > 0:
                     start_x = x
-                    while x < map_w and image_map.get_at((x, y))[3] > 0: x += 1
+                    while x < map_w and image_map.get_at((x, y))[3] > 0:
+                        x += 1
                     w = (x - start_x) * SCALE
-                    platform = Platform(start_x * SCALE, y * SCALE, w, SCALE)
+                    platform = Platform(start_x * SCALE, y * SCALE, w, TILE_SIZE)
                     self.solid_group.add(platform)
-                else: x += 1
+                else:
+                    x += 1
 
-    def _create_blocks_from_template_match(self):
-        print("\n--- Starting Block Placement ---")
-
-        # --- Breakable Blocks ---
+    def _create_objects_from_template_match(self):
+        print("\n--- Starting Object Placement from Templates ---")
         breakable_pos_map_path = os.path.join(self.world_dir, "BreakablePosData.png")
-        breakable_templates = {
-            "BreakableBlock_AG.png": pygame.transform.scale(pygame.image.load(os.path.join(BLOCK_PATH, "BreakableBlock_AG.png")).convert_alpha(), (TILE_SIZE, TILE_SIZE)),
-            "BreakableBlock_BG.png": pygame.transform.scale(pygame.image.load(os.path.join(BLOCK_PATH, "BreakableBlock_BG.png")).convert_alpha(), (TILE_SIZE, TILE_SIZE))
+        breakable_definitions = {
+            "BAGDect.png": "BreakableBlock_AG.png",
+            "BBGDect.png": "BreakableBlock_BG.png"
         }
-        for filename, block_image in breakable_templates.items():
-            template_path = os.path.join(BLOCK_PATH, filename)
-            print(f"Scanning for {filename}...")
+        for dect_img, place_img in breakable_definitions.items():
+            print(f"Scanning for {dect_img}...")
+            template_path = os.path.join(BLOCK_PATH, dect_img)
+            placement_sprite_path = os.path.join(BLOCK_PATH, place_img)
+            try:
+                raw_surf = pygame.image.load(placement_sprite_path)
+                scaled_surf = pygame.transform.scale(raw_surf, (TILE_SIZE, TILE_SIZE))
+                block_image = scaled_surf.convert_alpha()
+            except pygame.error:
+                print(f"Could not load placement sprite: {placement_sprite_path}. Skipping.")
+                continue
             matches = find_template_matches(breakable_pos_map_path, template_path)
-            if matches:
-                print(f"Found {len(matches)} matches for {filename}:")
-                for (x, y) in matches:
-                    world_x, world_y = x * SCALE, y * SCALE
-                    block = Brick(world_x, world_y, block_image)
-                    self.all_sprites.add(block)
-                    self.solid_group.add(block)
-            else: print(f"No matches found for {filename}.")
-
-        # --- Lucky Blocks ---
-        lucky_pos_map_path = os.path.join(self.world_dir, "LuckyBlockPosData.png")
-        lucky_template_path = os.path.join(BLOCK_PATH, "LuckyBlock_AG.png")
-
-        # Load the full lucky block spritesheet
-        lucky_sheet_img = pygame.image.load(lucky_template_path).convert_alpha()
-
-        # Precisely extract the first 16x16 frame for template matching
-        first_frame_template_surf = pygame.Surface((16,16), pygame.SRCALPHA)
-        first_frame_template_surf.blit(lucky_sheet_img, (0,0), (0,0,16,16))
-        temp_template_path = "temp_lucky_block_template.png"
-        pygame.image.save(first_frame_template_surf, temp_template_path)
-
-        # Precisely extract frames for the LuckyBlock object visuals
-        lucky_img_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
-        lucky_img_surf.blit(lucky_sheet_img, (0,0), (0,0,16,16))
-        lucky_img = pygame.transform.scale(lucky_img_surf, (TILE_SIZE, TILE_SIZE))
-
-        used_img_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
-        used_img_surf.blit(lucky_sheet_img, (0,0), (17,0,16,16)) # Use precise coordinate
-        used_img = pygame.transform.scale(used_img_surf, (TILE_SIZE, TILE_SIZE))
-
-        print(f"Scanning for Lucky Blocks...")
-        matches = find_template_matches(lucky_pos_map_path, temp_template_path)
-        if matches:
-            print(f"Found {len(matches)} matches for Lucky Blocks:")
-            for (x,y) in matches:
-                world_x, world_y = x * SCALE, y * SCALE
-                block = LuckyBlock(world_x, world_y, lucky_img, used_img)
+            print(f"Found {len(matches)} matches.")
+            for x, y in matches:
+                block = Brick(x * SCALE, y * SCALE, block_image)
                 self.all_sprites.add(block)
                 self.solid_group.add(block)
+                self.breakable_blocks.add(block)
+
+        lucky_pos_map_path = os.path.join(self.world_dir, "LuckyBlockPosData.png")
+        lucky_dect_path = os.path.join(BLOCK_PATH, "LuckyBlockDect.png")
+        lucky_spritesheet_path = os.path.join(BLOCK_PATH, "LuckyBlock_AG.png")
+        print(f"Scanning for Lucky Blocks...")
+        try:
+            lucky_sheet = SpriteSheet(lucky_spritesheet_path)
+            # --- FIX: Load the two static frames from the 2-frame spritesheet ---
+            active_image = lucky_sheet.get_sprite(0, 0, 16, 16, 1)
+            used_image = lucky_sheet.get_sprite(1, 0, 16, 16, 1)
+        except Exception as e:
+            print(f"Could not load Lucky Block assets: {e}. Skipping.")
         else:
-            print("No Lucky Block matches found.")
-        os.remove(temp_template_path)
-        print("--- Finished Block Placement ---\n")
+            matches = find_template_matches(lucky_pos_map_path, lucky_dect_path)
+            print(f"Found {len(matches)} Lucky Block matches.")
+            for x, y in matches:
+                block = LuckyBlock(x * SCALE, y * SCALE, active_image, used_image)
+                self.all_sprites.add(block)
+                self.solid_group.add(block)
+                self.lucky_blocks.add(block)
+
 
     def find_spawn_pos(self):
         if self.solid_group:
-            platforms_only = [p for p in self.solid_group if not isinstance(p, Block)]
+            platforms_only = [p for p in self.solid_group if isinstance(p, Platform)]
             if platforms_only:
                 start_platform = min(platforms_only, key=lambda s: (s.rect.top, s.rect.left))
-            else: 
+            else:
                 start_platform = min(self.solid_group.sprites(), key=lambda s: (s.rect.top, s.rect.left))
-            self.spawn = vec(start_platform.rect.left + 48, start_platform.rect.top)
+            self.spawn = vec(start_platform.rect.left + 48, start_platform.rect.top - TILE_SIZE)
+
 
 class Player(pygame.sprite.Sprite):
     def __init__(self, game):
         super().__init__()
         self.game = game
-        self.animator = Animator(self)
-        sheet = SpriteSheet(os.path.join(SHARED_PATH, "MarioLuigi.png"))
-        self.animator.add('idle', Animation(sheet, 2, 1, 1, 500))
-        self.animator.add('walk', Animation(sheet, 0, 1, 3, 360))
-        self.animator.add('jump', Animation(sheet, 0, 0, 1, 500))
-        self.direction = 'right'
-        self.power_level = 'small'
-        self.animator.set('idle')
-        self.image = self.animator.current.frames[0]
+        self.image = pygame.Surface((12 * SCALE, 15 * SCALE)).convert_alpha()
+        self.image.fill((0,0,0,0))
         self.rect = self.image.get_rect()
+        self.hitbox = self.rect.inflate(-4, -2)
         self.pos = vec(100, 400)
         self.vel = vec(0, 0)
         self.acc = vec(0, 0)
+        self.direction = "right"
         self.on_ground = False
+        self.power_level = "small"
+        self.animator = Animator(self)
+        self.load_animations()
+        self.animator.set("idle")
+
+    def load_animations(self):
+        sheet_path = os.path.join(SHARED_PATH, "MarioLuigi.png")
+        try:
+            sheet = SpriteSheet(sheet_path)
+            self.animator.add("idle", Animation(sheet, 0, 1, 1, 500))
+            self.animator.add("walk", Animation(sheet, 1, 1, 3, 300))
+            self.animator.add("jump", Animation(sheet, 0, 0, 1, 500))
+            self.animator.add("skid", Animation(sheet, 4, 1, 1, 500))
+        except Exception as e:
+            print(f"Could not load player animations from {sheet_path}: {e}")
 
     def update(self):
-        self.acc = vec(0, PLAYER_GRAVITY)
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]: self.acc.x = -PLAYER_ACC; self.direction = 'left'
-        if keys[pygame.K_RIGHT]: self.acc.x = PLAYER_ACC; self.direction = 'right'
-        self.acc.x += self.vel.x * PLAYER_FRICTION
-        self.vel += self.acc
+        self.acc.x = 0
+        if keys[pygame.K_LEFT]:
+            self.acc.x = -PLAYER_ACC
+            self.direction = "left"
+        if keys[pygame.K_RIGHT]:
+            self.acc.x = PLAYER_ACC
+            self.direction = "right"
+
+        if self.on_ground:
+            self.acc.x += self.vel.x * PLAYER_FRICTION
+        self.vel.x += self.acc.x
+        self.vel.y += PLAYER_GRAVITY
         if abs(self.vel.x) < 0.1: self.vel.x = 0
-        if abs(self.vel.x) > MAX_RUN_SPEED: self.vel.x = MAX_RUN_SPEED * (1 if self.vel.x > 0 else -1)
+        self.vel.x = max(-MAX_RUN_SPEED, min(MAX_RUN_SPEED, self.vel.x))
+        self.vel.y = min(MAX_FALL_SPEED, self.vel.y)
 
         self.pos.x += self.vel.x
-        self.rect.centerx = round(self.pos.x)
-        self.check_collisions('horizontal')
+        self.hitbox.centerx = round(self.pos.x)
+        self.check_collisions('horizontal', self.game.level.solid_group)
 
         self.pos.y += self.vel.y
-        self.rect.centery = round(self.pos.y)
-        self.check_collisions('vertical')
+        self.hitbox.centery = round(self.pos.y)
+        self.on_ground = False
+        self.check_collisions('vertical', self.game.level.solid_group)
 
+        self.set_anim_state()
         self.animator.update()
-        self.set_state()
-        if self.rect.top > self.game.level.rect.height:
-            print("Player died: fell off map"); self.game.playing = False
 
-    def check_collisions(self, direction):
-        hits = pygame.sprite.spritecollide(self, self.game.level.solid_group, False)
-        if direction == 'horizontal':
-            for hit in hits:
-                if self.vel.x > 0: self.rect.right = hit.rect.left
-                elif self.vel.x < 0: self.rect.left = hit.rect.right
-                self.pos.x = self.rect.centerx
-        if direction == 'vertical':
-            self.on_ground = False
-            for hit in hits:
-                if self.vel.y > 0:
-                    self.rect.bottom = hit.rect.top
-                    self.on_ground = True
-                    self.vel.y = 0
-                elif self.vel.y < 0:
-                    self.rect.top = hit.rect.bottom
-                    self.vel.y = 0
-                    if isinstance(hit, Block): hit.hit(self)
-            self.pos.y = self.rect.centery
+        if self.pos.y > self.game.level.rect.height + 100:
+            print("Player died: fell off map")
+            self.game.playing = False
 
-    def set_state(self):
-        if not self.on_ground: self.animator.set('jump')
-        elif abs(self.vel.x) > 0.5: self.animator.set('walk')
-        else: self.animator.set('idle')
+    def check_collisions(self, direction, collidables):
+        keys = pygame.key.get_pressed()
+        for sprite in collidables:
+            if self.hitbox.colliderect(sprite.hitbox):
+                if direction == 'horizontal':
+                    if self.vel.x > 0:
+                        self.hitbox.right = sprite.hitbox.left
+                    elif self.vel.x < 0:
+                        self.hitbox.left = sprite.hitbox.right
+                    self.pos.x = self.hitbox.centerx
+                    self.vel.x = 0
+                if direction == 'vertical':
+                    if self.vel.y > 0:
+                        self.hitbox.bottom = sprite.hitbox.top
+                        self.on_ground = True
+                        self.vel.y = 0
+                        if isinstance(sprite, Block) and keys[pygame.K_DOWN]:
+                             sprite.hit(self)
+                    elif self.vel.y < 0:
+                        self.hitbox.top = sprite.hitbox.bottom
+                        self.vel.y = 0
+                        if isinstance(sprite, Block):
+                            sprite.hit(self)
+                    self.pos.y = self.hitbox.centery
+
+    def set_anim_state(self):
+        if not self.on_ground:
+            self.animator.set("jump")
+        else:
+            if (self.vel.x > 1 and self.direction == 'left') or \
+               (self.vel.x < -1 and self.direction == 'right'):
+                self.animator.set("skid")
+            elif abs(self.vel.x) > 0.1:
+                self.animator.set("walk")
+            else:
+                self.animator.set("idle")
 
     def jump(self):
-        if self.on_ground: self.vel.y = PLAYER_JUMP
+        if self.on_ground:
+            self.vel.y = PLAYER_JUMP_STRENGTH
+
 
 class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Super Python Bro")
         self.clock = pygame.time.Clock()
         self.running = True
         self.playing = True
         self.debug_mode = False
+        self.console_active = False
+        self.console_text = ""
+        self.console_font = pygame.font.Font(None, 32)
 
     def new_game(self):
         self.level = Level("W1-1")
         self.player = Player(self)
         self.player.pos = self.level.spawn
-        self.player.rect.midbottom = self.level.spawn
         self.level.all_sprites.add(self.player)
         self.camera = Camera(self.level.rect.width, self.level.rect.height)
         self.run()
@@ -386,27 +443,84 @@ class Game:
 
     def events(self):
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: self.running = False; self.playing = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F1:
-                self.debug_mode = not self.debug_mode
+            if event.type == pygame.QUIT:
+                self.running = False
+                self.playing = False
+            elif event.type == pygame.KEYDOWN:
+                if self.console_active:
+                    if event.key == pygame.K_RETURN:
+                        self.execute_command(self.console_text)
+                        self.console_active = False
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.console_text = self.console_text[:-1]
+                    elif event.key == pygame.K_ESCAPE:
+                        self.console_active = False
+                        self.console_text = ""
+                    else:
+                        self.console_text += event.unicode
+                else:
+                    if event.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
+                        self.player.jump()
+                    elif event.key == pygame.K_SLASH or event.key == pygame.K_BACKQUOTE:
+                        self.console_active = True
+                        self.console_text = "/"
+                    elif event.key == pygame.K_F1:
+                        self.debug_mode = not self.debug_mode
+                        print(f"Debug mode toggled to {self.debug_mode}")
+                    elif event.key == pygame.K_ESCAPE:
+                        self.running = False
+                        self.playing = False
+
+    def execute_command(self, command):
+        print(f"\nExecuting command: {command}")
+        parts = command.strip().lstrip('/').split()
+        if not parts: return
+        cmd = parts[0].lower()
+        args = parts[1:]
+        if cmd == "tp":
+            if len(args) == 2:
+                try:
+                    self.player.pos = vec(float(args[0]), float(args[1]))
+                    self.player.vel = vec(0, 0)
+                except ValueError: print("Usage: /tp <x> <y>")
+            else: print("Usage: /tp <x> <y>")
+        elif cmd == "power":
+            if args and args[0].lower() in ["big", "super"]:
+                self.player.power_level = "big"
+                print("Player power level set to 'big'")
+            else:
+                self.player.power_level = "small"
+                print("Player power level set to 'small'")
 
     def update(self):
-        self.level.all_sprites.update()
-        self.camera.update(self.player)
+        if not self.console_active:
+            self.level.all_sprites.update()
+            self.camera.update(self.player)
 
     def draw(self):
         self.screen.fill(SKY_BLUE)
         self.screen.blit(self.level.background_layer, self.camera.apply_rect(self.level.rect))
         self.screen.blit(self.level.ground_layer, self.camera.apply_rect(self.level.ground_layer.get_rect()))
         self.screen.blit(self.level.tube_layer, self.camera.apply_rect(self.level.tube_layer.get_rect()))
+
         for sprite in self.level.all_sprites:
             self.screen.blit(sprite.image, self.camera.apply(sprite))
 
         if self.debug_mode:
+            pygame.draw.rect(self.screen, (255, 255, 0), self.camera.apply_rect(self.player.hitbox), 2)
             for sprite in self.level.solid_group:
-                pygame.draw.rect(self.screen, DEBUG_COLOR, self.camera.apply_rect(sprite.rect), 1)
+                pygame.draw.rect(self.screen, DEBUG_COLOR, self.camera.apply_rect(sprite.hitbox), 1)
+
+        if self.console_active:
+            console_surf = pygame.Surface((SCREEN_WIDTH, 40))
+            console_surf.set_alpha(180)
+            console_surf.fill(BLACK)
+            self.screen.blit(console_surf, (0, 0))
+            text_surf = self.console_font.render(self.console_text, True, WHITE)
+            self.screen.blit(text_surf, (5, 5))
 
         pygame.display.flip()
+
 
 class Camera:
     def __init__(self, width, height):
@@ -415,17 +529,19 @@ class Camera:
 
     def apply(self, entity):
         return entity.rect.move(self.camera.topleft)
+
     def apply_rect(self, rect):
         return rect.move(self.camera.topleft)
 
     def update(self, target):
-        x = -target.rect.centerx + SCREEN_WIDTH // 3
-        y = -target.rect.centery + SCREEN_HEIGHT // 1.25
+        x = -target.hitbox.centerx + int(SCREEN_WIDTH / 2.5)
+        y = -target.hitbox.centery + int(SCREEN_HEIGHT * 0.7)
         x = min(0, x)
         x = max(-(self.width - SCREEN_WIDTH), x)
         y = min(0, y)
         y = max(-(self.height - SCREEN_HEIGHT), y)
         self.camera = pygame.Rect(x, y, self.width, self.height)
+
 
 if __name__ == "__main__":
     g = Game()
