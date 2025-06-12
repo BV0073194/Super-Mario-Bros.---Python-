@@ -44,19 +44,19 @@ MUSIC_PATH = os.path.join(SOUNDS_PATH, "music")
 WORLD_DATA = {
     "W1-1": {
         "lucky_blocks": {
-            0: {
+            5: {
                 'type': 'multi_coin',
-                'hits': 5
+                'hits': 1
             },
-            1: {
+            6: {
                 'type': 'single_powerup',
                 'powerups': ['mushroom']
             },
-            5: {
+            7: {
                 'type': 'multi_coin',
                 'hits': 10
             },  # Example of defining an ID out of order
-            2: {
+            0: {
                 'type': 'multi_coin',
                 'hits': 1
             },
