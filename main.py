@@ -1,5 +1,5 @@
 # main.py
-# Refactor 10: Correcting Block Bump Physics and Reset Logic
+# Refactor 11: Adding Music and Sound Effects
 
 import pygame
 import os
@@ -32,6 +32,10 @@ vec = pygame.math.Vector2
 WORLD_PATH_BASE = os.path.join("game", "assets", "Worlds")
 SHARED_PATH = os.path.join("game", "assets", "Shared")
 BLOCK_PATH = os.path.join(SHARED_PATH, "blocks")
+# --- Path for Sound Assets ---
+SOUNDS_PATH = os.path.join("game", "assets", "sounds")
+MUSIC_PATH = os.path.join(SOUNDS_PATH, "music")
+
 
 # --- Helper function for Template Matching ---
 def find_template_matches(position_map_path, template_path, threshold=0.9):
@@ -149,7 +153,6 @@ class Block(pygame.sprite.Sprite):
         super().__init__()
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
-        # --- Store original position as an integer tuple to avoid float precision errors ---
         self.original_pos = self.rect.center
         self.bumping = False
         self.bump_offset = 0
@@ -160,19 +163,16 @@ class Block(pygame.sprite.Sprite):
     def update(self):
         if self.bumping:
             self.bump_offset += 1
-            # --- FIX: A corrected parabolic motion formula for a 12-frame bump ---
-            # This ensures the block moves smoothly up and returns precisely to the start.
             progress = self.bump_offset / 12.0
-            y_offset = 48 * (progress - progress**2) # 48 gives a peak of 12 pixels
+            y_offset = 48 * (progress - progress**2)
             self.rect.centery = self.original_pos[1] - y_offset
 
             if self.bump_offset >= 12:
                 self.rect.center = self.original_pos
                 self.bumping = False
-                self.bump_offset = 0 # Reset offset for the next bump
+                self.bump_offset = 0
                 self.post_bump()
 
-        # This must be the last step to ensure hitbox is synced with the final rect position
         self.hitbox.center = self.rect.center
 
     def hit(self, player):
@@ -201,7 +201,6 @@ class LuckyBlock(Block):
         if not self.is_used:
             self.is_used = True
             self.image = self.used_image
-            # --- FIX: Center the new rect on the block's true original position, not the hitbox ---
             self.rect = self.image.get_rect(center=self.original_pos)
 
 
@@ -212,6 +211,8 @@ class Level:
         self.solid_group = pygame.sprite.Group()
         self.breakable_blocks = pygame.sprite.Group()
         self.lucky_blocks = pygame.sprite.Group()
+        # --- Add level-specific music file ---
+        self.music_file = "01-main-theme-overworld.mp3"
         self.load_layers()
         self.width = self.background_layer.get_width()
         self.height = self.background_layer.get_height()
@@ -416,11 +417,17 @@ class Player(pygame.sprite.Sprite):
     def jump(self):
         if self.on_ground:
             self.vel.y = PLAYER_JUMP_STRENGTH
+            # --- Play jump sound effect ---
+            self.game.play_sfx("jump")
 
 
 class Game:
     def __init__(self):
+        # --- Initialize mixer before the main pygame.init() ---
+        pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
+        pygame.mixer.init()
+
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Super Python Bro")
         self.clock = pygame.time.Clock()
@@ -430,6 +437,9 @@ class Game:
         self.console_active = False
         self.console_text = ""
         self.console_font = pygame.font.Font(None, 32)
+        # --- Dictionary to hold loaded sound effects ---
+        self.sfx = {}
+        self.load_sfx()
 
     def new_game(self):
         self.level = Level("W1-1")
@@ -437,6 +447,7 @@ class Game:
         self.player.pos = self.level.spawn
         self.level.all_sprites.add(self.player)
         self.camera = Camera(self.level.rect.width, self.level.rect.height)
+        self.play_level_music()
         self.run()
 
     def run(self):
@@ -527,6 +538,31 @@ class Game:
 
         pygame.display.flip()
 
+    # --- Sound Methods ---
+    def load_sfx(self):
+        """Load all sound effects into a dictionary."""
+        try:
+            self.sfx["jump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "jump.mp3"))
+            # Add other sound effects here
+            # self.sfx["bump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "bump.wav"))
+        except pygame.error as e:
+            print(f"Cannot load sound effect: {e}")
+
+    def play_sfx(self, name):
+        """Play a sound effect from the loaded dictionary."""
+        if name in self.sfx:
+            self.sfx[name].play()
+
+    def play_level_music(self):
+        """Load and play the music for the current level."""
+        music_path = os.path.join(MUSIC_PATH, self.level.music_file)
+        if os.path.exists(music_path):
+            pygame.mixer.music.load(music_path)
+            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.play(loops=-1)
+        else:
+            print(f"Warning: Music file not found: {music_path}")
+
 
 class Camera:
     def __init__(self, width, height):
@@ -541,7 +577,7 @@ class Camera:
 
     def update(self, target):
         x = -target.hitbox.centerx + int(SCREEN_WIDTH / 2.5)
-        y = -target.hitbox.centery + int(SCREEN_HEIGHT * 0.8)
+        y = -target.hitbox.centery + int(SCREEN_HEIGHT * 0.7)
         x = min(0, x)
         x = max(-(self.width - SCREEN_WIDTH), x)
         y = min(0, y)
