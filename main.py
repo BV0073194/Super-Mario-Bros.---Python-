@@ -282,9 +282,9 @@ class Level:
         print(f"Scanning for Lucky Blocks...")
         try:
             lucky_sheet = SpriteSheet(lucky_spritesheet_path)
-            # --- FIX: Load the two static frames from the 2-frame spritesheet ---
-            active_image = lucky_sheet.get_sprite(0, 0, 16, 16, 1)
-            used_image = lucky_sheet.get_sprite(1, 0, 16, 16, 1)
+            # --- FIX: Load the two static frames from the 2-frame spritesheet with 0 padding ---
+            active_image = lucky_sheet.get_sprite(0, 0, 16, 16, 0)
+            used_image = lucky_sheet.get_sprite(1, 0, 16, 16, 0)
         except Exception as e:
             print(f"Could not load Lucky Block assets: {e}. Skipping.")
         else:
