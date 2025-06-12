@@ -44,7 +44,8 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
     template_img = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
 
     if pos_map_img is None:
-        print(f"Error: Could not load position map image at {position_map_path}")
+        print(
+            f"Error: Could not load position map image at {position_map_path}")
         return []
     if template_img is None:
         print(f"Error: Could not load template image at {template_path}")
@@ -64,7 +65,8 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
     for pt in zip(*locations[::-1]):
         too_close = False
         for processed_pt in processed_points:
-            if abs(pt[0] - processed_pt[0]) < w * 0.5 and abs(pt[1] - processed_pt[1]) < h * 0.5:
+            if abs(pt[0] - processed_pt[0]) < w * 0.5 and abs(
+                    pt[1] - processed_pt[1]) < h * 0.5:
                 too_close = True
                 break
         if not too_close:
@@ -74,6 +76,7 @@ def find_template_matches(position_map_path, template_path, threshold=0.9):
 
 
 class SpriteSheet:
+
     def __init__(self, filename):
         try:
             self.sheet = pygame.image.load(filename).convert_alpha()
@@ -90,7 +93,15 @@ class SpriteSheet:
 
 
 class Animation:
-    def __init__(self, sheet, col, row, count, duration, layout="horizontal", looped=True):
+
+    def __init__(self,
+                 sheet,
+                 col,
+                 row,
+                 count,
+                 duration,
+                 layout="horizontal",
+                 looped=True):
         self.frames = []
         if count > 0:
             self.duration = duration / count if duration > 0 else 0
@@ -104,6 +115,7 @@ class Animation:
 
 
 class Animator:
+
     def __init__(self, target_sprite):
         self.target = target_sprite
         self.animations = {}
@@ -127,28 +139,35 @@ class Animator:
         if self.current.duration > 0 and now - self.last_time > self.current.duration:
             self.last_time = now
             if self.current.looped:
-                self.frame_index = (self.frame_index + 1) % len(self.current.frames)
+                self.frame_index = (self.frame_index + 1) % len(
+                    self.current.frames)
             else:
-                self.frame_index = min(self.frame_index + 1, len(self.current.frames) - 1)
+                self.frame_index = min(self.frame_index + 1,
+                                       len(self.current.frames) - 1)
 
         if self.frame_index < len(self.current.frames):
             frame = self.current.frames[self.frame_index]
 
-            if hasattr(self.target, 'direction') and self.target.direction == 'left':
+            if hasattr(self.target,
+                       'direction') and self.target.direction == 'left':
                 frame = pygame.transform.flip(frame, True, False)
 
             self.target.image = frame
             if hasattr(self.target, 'hitbox'):
-                self.target.rect = self.target.image.get_rect(center=self.target.hitbox.center)
+                self.target.rect = self.target.image.get_rect(
+                    center=self.target.hitbox.center)
 
 
 class Platform(pygame.sprite.Sprite):
+
     def __init__(self, x, y, w, h):
         super().__init__()
         self.rect = pygame.Rect(x, y, w, h)
         self.hitbox = self.rect.copy()
 
+
 class Particle(pygame.sprite.Sprite):
+
     def __init__(self, x, y, color):
         super().__init__()
         self.image = pygame.Surface((SCALE, SCALE))
@@ -164,7 +183,9 @@ class Particle(pygame.sprite.Sprite):
         if self.rect.top > SCREEN_HEIGHT:
             self.kill()
 
+
 class Block(pygame.sprite.Sprite):
+
     def __init__(self, x, y, image, game):
         super().__init__()
         self.game = game
@@ -201,7 +222,9 @@ class Block(pygame.sprite.Sprite):
     def post_bump(self):
         pass
 
+
 class Brick(Block):
+
     def hit(self, player):
         if not self.bumping:
             if player.power_level == "small":
@@ -211,7 +234,9 @@ class Brick(Block):
                 self.game.create_particles(self.rect, self.image)
                 self.kill()
 
+
 class LuckyBlock(Block):
+
     def __init__(self, x, y, active_image, used_image, game):
         super().__init__(x, y, active_image, game)
         self.used_image = used_image
@@ -222,10 +247,11 @@ class LuckyBlock(Block):
             self.is_used = True
             self.image = self.used_image
             self.rect = self.image.get_rect(center=self.original_pos)
-            self.game.play_sfx("powerup_appears")
+            #self.game.play_sfx("powerup_appears")
 
 
 class Level:
+
     def __init__(self, world_name, game):
         self.game = game
         self.world_dir = os.path.join(WORLD_PATH_BASE, world_name)
@@ -246,18 +272,19 @@ class Level:
         self.background_layer = self._load_visual_layer("BackgroundData.png")
         self.ground_layer = self._load_visual_layer("GroundData.png")
         self.tube_layer = self._load_visual_layer("TubeData.png")
-        self._create_collision_from_map(os.path.join(self.world_dir, "GroundData.png"))
-        self._create_collision_from_map(os.path.join(self.world_dir, "TubeData.png"))
+        self._create_collision_from_map(
+            os.path.join(self.world_dir, "GroundData.png"))
+        self._create_collision_from_map(
+            os.path.join(self.world_dir, "TubeData.png"))
         self._create_objects_from_template_match()
 
     def _load_visual_layer(self, filename):
         path = os.path.join(self.world_dir, filename)
         raw_image = pygame.image.load(path)
         scaled_image = pygame.transform.scale(
-            raw_image, (raw_image.get_width() * SCALE, raw_image.get_height() * SCALE)
-        )
+            raw_image,
+            (raw_image.get_width() * SCALE, raw_image.get_height() * SCALE))
         return scaled_image.convert_alpha()
-
 
     def _create_collision_from_map(self, path):
         try:
@@ -274,14 +301,16 @@ class Level:
                     while x < map_w and image_map.get_at((x, y))[3] > 0:
                         x += 1
                     w = (x - start_x) * SCALE
-                    platform = Platform(start_x * SCALE, y * SCALE, w, TILE_SIZE)
+                    platform = Platform(start_x * SCALE, y * SCALE, w,
+                                        TILE_SIZE)
                     self.solid_group.add(platform)
                 else:
                     x += 1
 
     def _create_objects_from_template_match(self):
         print("\n--- Starting Object Placement from Templates ---")
-        breakable_pos_map_path = os.path.join(self.world_dir, "BreakablePosData.png")
+        breakable_pos_map_path = os.path.join(self.world_dir,
+                                              "BreakablePosData.png")
         breakable_definitions = {
             "BAGDect.png": "BreakableBlock_AG.png",
             "BBGDect.png": "BreakableBlock_BG.png"
@@ -292,12 +321,16 @@ class Level:
             placement_sprite_path = os.path.join(BLOCK_PATH, place_img)
             try:
                 raw_surf = pygame.image.load(placement_sprite_path)
-                scaled_surf = pygame.transform.scale(raw_surf, (TILE_SIZE, TILE_SIZE))
+                scaled_surf = pygame.transform.scale(raw_surf,
+                                                     (TILE_SIZE, TILE_SIZE))
                 block_image = scaled_surf.convert_alpha()
             except pygame.error:
-                print(f"Could not load placement sprite: {placement_sprite_path}. Skipping.")
+                print(
+                    f"Could not load placement sprite: {placement_sprite_path}. Skipping."
+                )
                 continue
-            matches = find_template_matches(breakable_pos_map_path, template_path)
+            matches = find_template_matches(breakable_pos_map_path,
+                                            template_path)
             print(f"Found {len(matches)} matches.")
             for x, y in matches:
                 block = Brick(x * SCALE, y * SCALE, block_image, self.game)
@@ -305,7 +338,8 @@ class Level:
                 self.solid_group.add(block)
                 self.breakable_blocks.add(block)
 
-        lucky_pos_map_path = os.path.join(self.world_dir, "LuckyBlockPosData.png")
+        lucky_pos_map_path = os.path.join(self.world_dir,
+                                          "LuckyBlockPosData.png")
         lucky_dect_path = os.path.join(BLOCK_PATH, "LuckyBlockDect.png")
         lucky_spritesheet_path = os.path.join(BLOCK_PATH, "LuckyBlock_AG.png")
         print(f"Scanning for Lucky Blocks...")
@@ -316,31 +350,38 @@ class Level:
         except Exception as e:
             print(f"Could not load Lucky Block assets: {e}. Skipping.")
         else:
-            matches = find_template_matches(lucky_pos_map_path, lucky_dect_path)
+            matches = find_template_matches(lucky_pos_map_path,
+                                            lucky_dect_path)
             print(f"Found {len(matches)} Lucky Block matches.")
             for x, y in matches:
-                block = LuckyBlock(x * SCALE, y * SCALE, active_image, used_image, self.game)
+                block = LuckyBlock(x * SCALE, y * SCALE, active_image,
+                                   used_image, self.game)
                 self.all_sprites.add(block)
                 self.solid_group.add(block)
                 self.lucky_blocks.add(block)
 
-
     def find_spawn_pos(self):
         if self.solid_group:
-            platforms_only = [p for p in self.solid_group if isinstance(p, Platform)]
+            platforms_only = [
+                p for p in self.solid_group if isinstance(p, Platform)
+            ]
             if platforms_only:
-                start_platform = min(platforms_only, key=lambda s: (s.rect.top, s.rect.left))
+                start_platform = min(platforms_only,
+                                     key=lambda s: (s.rect.top, s.rect.left))
             else:
-                start_platform = min(self.solid_group.sprites(), key=lambda s: (s.rect.top, s.rect.left))
-            self.spawn = vec(start_platform.rect.left + 48, start_platform.rect.top - TILE_SIZE)
+                start_platform = min(self.solid_group.sprites(),
+                                     key=lambda s: (s.rect.top, s.rect.left))
+            self.spawn = vec(start_platform.rect.left + 48,
+                             start_platform.rect.top - TILE_SIZE)
 
 
 class Player(pygame.sprite.Sprite):
+
     def __init__(self, game):
         super().__init__()
         self.game = game
         self.image = pygame.Surface((12 * SCALE, 15 * SCALE)).convert_alpha()
-        self.image.fill((0,0,0,0))
+        self.image.fill((0, 0, 0, 0))
         self.rect = self.image.get_rect()
         self.hitbox = self.rect.inflate(-4, -2)
         self.pos = vec(100, 400)
@@ -380,7 +421,7 @@ class Player(pygame.sprite.Sprite):
             print("Player is now BIG")
             self.animator.animations = self.big_anims
             self.hitbox = pygame.Rect(0, 0, 16 * SCALE, 30 * SCALE)
-        else: 
+        else:
             print("Player is now SMALL")
             self.animator.animations = self.small_anims
             self.hitbox = pygame.Rect(0, 0, 12 * SCALE, 15 * SCALE)
@@ -388,7 +429,6 @@ class Player(pygame.sprite.Sprite):
         self.hitbox.bottom = bottom
         self.pos = vec(self.hitbox.center)
         self.animator.set("idle")
-
 
     def update(self):
         keys = pygame.key.get_pressed()
@@ -441,7 +481,7 @@ class Player(pygame.sprite.Sprite):
                         self.on_ground = True
                         self.vel.y = 0
                         if isinstance(sprite, Block) and keys[pygame.K_DOWN]:
-                             sprite.hit(self)
+                            sprite.hit(self)
                     elif self.vel.y < 0:
                         self.hitbox.top = sprite.hitbox.bottom
                         self.vel.y = 0
@@ -468,6 +508,7 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game:
+
     def __init__(self):
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
@@ -551,8 +592,10 @@ class Game:
                 try:
                     self.player.pos = vec(float(args[0]), float(args[1]))
                     self.player.vel = vec(0, 0)
-                except ValueError: print("Usage: /tp <x> <y>")
-            else: print("Usage: /tp <x> <y>")
+                except ValueError:
+                    print("Usage: /tp <x> <y>")
+            else:
+                print("Usage: /tp <x> <y>")
         elif cmd == "power":
             if args and args[0].lower() in ["big", "super"]:
                 self.player.set_power_level("big")
@@ -567,9 +610,14 @@ class Game:
 
     def draw(self):
         self.screen.fill(SKY_BLUE)
-        self.screen.blit(self.level.background_layer, self.camera.apply_rect(self.level.rect))
-        self.screen.blit(self.level.ground_layer, self.camera.apply_rect(self.level.ground_layer.get_rect()))
-        self.screen.blit(self.level.tube_layer, self.camera.apply_rect(self.level.tube_layer.get_rect()))
+        self.screen.blit(self.level.background_layer,
+                         self.camera.apply_rect(self.level.rect))
+        self.screen.blit(
+            self.level.ground_layer,
+            self.camera.apply_rect(self.level.ground_layer.get_rect()))
+        self.screen.blit(
+            self.level.tube_layer,
+            self.camera.apply_rect(self.level.tube_layer.get_rect()))
 
         for sprite in self.level.all_sprites:
             self.screen.blit(sprite.image, self.camera.apply(sprite))
@@ -577,18 +625,20 @@ class Game:
         for particle in self.particle_group:
             self.screen.blit(particle.image, self.camera.apply(particle))
 
-
         if self.debug_mode:
-            pygame.draw.rect(self.screen, (255, 255, 0), self.camera.apply_rect(self.player.hitbox), 2)
+            pygame.draw.rect(self.screen, (255, 255, 0),
+                             self.camera.apply_rect(self.player.hitbox), 2)
             for sprite in self.solid_group:
-                pygame.draw.rect(self.screen, DEBUG_COLOR, self.camera.apply_rect(sprite.hitbox), 1)
+                pygame.draw.rect(self.screen, DEBUG_COLOR,
+                                 self.camera.apply_rect(sprite.hitbox), 1)
 
         if self.console_active:
             console_surf = pygame.Surface((SCREEN_WIDTH, 40))
             console_surf.set_alpha(180)
             console_surf.fill(BLACK)
             self.screen.blit(console_surf, (0, 0))
-            text_surf = self.console_font.render(self.console_text, True, WHITE)
+            text_surf = self.console_font.render(self.console_text, True,
+                                                 WHITE)
             self.screen.blit(text_surf, (5, 5))
 
         pygame.display.flip()
@@ -598,10 +648,13 @@ class Game:
         if not self.audio_enabled:
             return
         try:
-            self.sfx["jump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "jump.mp3"))
-            self.sfx["bump"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "bump.mp3"))
-            self.sfx["brick_break"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "brick-smash.mp3"))
-            self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
+            self.sfx["jump"] = pygame.mixer.Sound(
+                os.path.join(SOUNDS_PATH, "jump.mp3"))
+            self.sfx["bump"] = pygame.mixer.Sound(
+                os.path.join(SOUNDS_PATH, "bump.mp3"))
+            self.sfx["brick_break"] = pygame.mixer.Sound(
+                os.path.join(SOUNDS_PATH, "brick-smash.mp3"))
+            #self.sfx["powerup_appears"] = pygame.mixer.Sound(os.path.join(SOUNDS_PATH, "powerup-appears.mp3"))
 
         except pygame.error as e:
             print(f"Cannot load sound effect: {e}")
@@ -641,6 +694,7 @@ class Game:
 
 
 class Camera:
+
     def __init__(self, width, height):
         self.camera = pygame.Rect(0, 0, width, height)
         self.width, self.height = width, height
