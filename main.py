@@ -426,7 +426,13 @@ class Game:
         # --- Initialize mixer before the main pygame.init() ---
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
-        pygame.mixer.init()
+        try:
+            pygame.mixer.init()
+            self.audio_enabled = True
+        except pygame.error:
+            print("Audio system not available. Sounds disabled.")
+            self.audio_enabled = False
+
 
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Super Python Bro")
@@ -555,11 +561,18 @@ class Game:
 
     def play_level_music(self):
         """Load and play the music for the current level."""
+        if not self.audio_enabled:
+            print("Audio not enabled — skipping music playback.")
+            return
+
         music_path = os.path.join(MUSIC_PATH, self.level.music_file)
         if os.path.exists(music_path):
-            pygame.mixer.music.load(music_path)
-            pygame.mixer.music.set_volume(0.5)
-            pygame.mixer.music.play(loops=-1)
+            try:
+                pygame.mixer.music.load(music_path)
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(loops=-1)
+            except pygame.error as e:
+                print(f"Error playing music: {e}")
         else:
             print(f"Warning: Music file not found: {music_path}")
 
