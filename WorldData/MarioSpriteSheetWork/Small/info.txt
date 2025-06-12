@@ -1,0 +1,1 @@
+SmallMarioList: 16x16px with padding of 1px
